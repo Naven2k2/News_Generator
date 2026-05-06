@@ -40,17 +40,20 @@ def generate_content(prompt):
 
 
 # =========================
-# 📥 TRANSCRIPT
+# 📥 TRANSCRIPT (SAFE)
 # =========================
 @lru_cache(maxsize=10)
 def extract_transcript(link):
-    loader = YoutubeLoader.from_youtube_url(link)
-    docs = loader.load()
-    return docs[0].page_content
+    try:
+        loader = YoutubeLoader.from_youtube_url(link)
+        docs = loader.load()
+        return docs[0].page_content
+    except:
+        return None
 
 
 # =========================
-# ✂️ SPLIT TEXT
+# ✂️ TEXT SPLITTING
 # =========================
 def get_chunks(text):
     splitter = RecursiveCharacterTextSplitter(
@@ -58,24 +61,6 @@ def get_chunks(text):
         chunk_overlap=200
     )
     return splitter.split_text(text)
-
-
-# =========================
-# 🔍 IMPROVED CLASSIFIER (SAFE)
-# =========================
-def is_media_content(text):
-    prompt = f"""
-Check if this content is related to:
-AI, technology, education, news, business, or digital topics.
-
-Return ONLY:
-YES or NO
-
-Content:
-{text[:1000]}
-"""
-    result = generate_content(prompt).strip().upper()
-    return "YES" in result
 
 
 # =========================
@@ -126,7 +111,7 @@ Content:
 
 
 # =========================
-# 🔧 EXTRACT SECTIONS
+# 🔧 EXTRACT HTML/CSS/JS
 # =========================
 def extract_section(text, tag):
     try:
@@ -138,12 +123,16 @@ def extract_section(text, tag):
 # =========================
 # 🎯 PROCESS
 # =========================
-def process_link(link):
+def process(link, manual_text):
     transcript = extract_transcript(link)
 
-    # Soft check (IMPORTANT FIX)
-    if not is_media_content(transcript):
-        st.warning("⚠️ Content may not be media-related, processing anyway...")
+    # 🚨 Fallback logic (IMPORTANT FIX)
+    if not transcript:
+        if manual_text:
+            st.warning("⚠️ Using manually provided transcript")
+            transcript = manual_text
+        else:
+            return None, "❌ Transcript not available. Paste manually."
 
     article = summarize_text(transcript)
     webpage = generate_webpage(article)
@@ -162,7 +151,7 @@ def process_link(link):
     with open("script.js", "w") as f:
         f.write(js)
 
-    # Zip
+    # Create ZIP
     with zipfile.ZipFile("website.zip", "w") as zipf:
         zipf.write("index.html")
         zipf.write("style.css")
@@ -172,7 +161,7 @@ def process_link(link):
 
 
 # =========================
-# 🎨 UI
+# 🎨 STREAMLIT UI
 # =========================
 st.set_page_config(page_title="AI Media Generator", layout="centered")
 
@@ -181,38 +170,77 @@ st.write("Convert YouTube videos into articles + websites")
 
 links_input = st.text_area("Enter YouTube links (comma separated):")
 
+# 🔥 NEW FEATURE
+manual_text = st.text_area("Or paste transcript manually (if YouTube fails):")
+
 if st.button("🚀 Generate"):
 
-    if not links_input.strip():
-        st.warning("Enter at least one link")
+    if not links_input.strip() and not manual_text.strip():
+        st.warning("Please enter a link or paste transcript")
     else:
-        links = [l.strip() for l in links_input.split(",")]
+        links = [l.strip() for l in links_input.split(",") if l.strip()]
 
         with st.spinner("Processing..."):
 
-            for link in links:
-                try:
-                    st.write(f"🔍 Checking: {link}")
+            if links:
+                for link in links:
+                    try:
+                        st.write(f"🔍 Checking: {link}")
 
-                    article, status = process_link(link)
-                    st.write(status)
+                        article, status = process(link, manual_text)
+                        st.write(status)
 
-                    if article:
-                        st.success("🎉 Article Generated")
+                        if article:
+                            st.success("🎉 Article Generated")
 
-                        st.subheader("📄 Article")
-                        st.write(article)
+                            st.subheader("📄 Article")
+                            st.write(article)
 
-                        with open("website.zip", "rb") as f:
-                            st.download_button(
-                                "📥 Download Website",
-                                data=f,
-                                file_name="website.zip"
-                            )
+                            with open("website.zip", "rb") as f:
+                                st.download_button(
+                                    "📥 Download Website",
+                                    data=f,
+                                    file_name="website.zip"
+                                )
 
-                        break
+                            break
 
-                except Exception as e:
-                    st.error(f"❌ Error: {str(e)}")
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+            else:
+                # If only manual input
+                article = summarize_text(manual_text)
+                webpage = generate_webpage(article)
+
+                html = extract_section(webpage, "html")
+                css = extract_section(webpage, "css")
+                js = extract_section(webpage, "js")
+
+                with open("index.html", "w") as f:
+                    f.write(html)
+
+                with open("style.css", "w") as f:
+                    f.write(css)
+
+                with open("script.js", "w") as f:
+                    f.write(js)
+
+                with zipfile.ZipFile("website.zip", "w") as zipf:
+                    zipf.write("index.html")
+                    zipf.write("style.css")
+                    zipf.write("script.js")
+
+                st.success("🎉 Generated from manual transcript")
+
+                st.subheader("📄 Article")
+                st.write(article)
+
+                with open("website.zip", "rb") as f:
+                    st.download_button(
+                        "📥 Download Website",
+                        data=f,
+                        file_name="website.zip"
+                    )
 
         st.info("✅ Done")
