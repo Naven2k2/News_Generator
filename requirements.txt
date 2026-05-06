@@ -1,5 +1,8 @@
+streamlit
 google-generativeai
 langchain
 langchain-community
+langchain-text-splitters
 youtube-transcript-api
 python-dotenv
+pytube
