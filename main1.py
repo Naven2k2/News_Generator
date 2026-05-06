@@ -1,34 +1,46 @@
+import streamlit as st
 import os
 import zipfile
-from dotenv import load_dotenv
 from functools import lru_cache
 
-from google import genai
+import google.generativeai as genai
 from langchain_community.document_loaders import YoutubeLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 
 # =========================
-# LOAD ENV + GEMINI
+# 🔐 API KEY
 # =========================
-load_dotenv()
+def get_api_key():
+    try:
+        return st.secrets["GEMINI_API_KEY"]
+    except:
+        return os.getenv("GEMINI_API_KEY")
 
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+
+api_key = get_api_key()
+
+if not api_key:
+    st.error("❌ Gemini API key not found. Add it in Streamlit Secrets.")
+    st.stop()
+
+genai.configure(api_key=api_key)
 
 
 # =========================
-# GEMINI FUNCTION
+# 🤖 GEMINI FUNCTION
 # =========================
 def generate_content(prompt):
-    response = client.models.generate_content(
-        model="gemini-2.5-flash-lite",
-        contents=prompt
-    )
-    return response.text
+    try:
+        model = genai.GenerativeModel("gemini-1.5-flash")
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        return f"⚠️ Error: {str(e)}"
 
 
 # =========================
-# TRANSCRIPT EXTRACTION
+# 📥 TRANSCRIPT
 # =========================
 @lru_cache(maxsize=10)
 def extract_transcript(link):
@@ -38,119 +50,61 @@ def extract_transcript(link):
 
 
 # =========================
-# TEXT SPLITTING
+# ✂️ SPLIT TEXT
 # =========================
 def get_chunks(text):
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=5000,
+        chunk_size=3000,
         chunk_overlap=200
     )
     return splitter.split_text(text)
 
 
 # =========================
-# 🔥 MEDIA CONTENT CLASSIFIER
+# 🔍 CLASSIFIER
 # =========================
 def is_media_content(text):
     prompt = f"""
-Classify this content.
+Classify content.
 
 Return ONLY:
-MEDIA → if related to AI, tech, news, YouTube, digital content, marketing
-NON_MEDIA → otherwise
+MEDIA or NON_MEDIA
 
 Content:
 {text[:1000]}
 """
-    result = generate_content(prompt).strip().upper()
+    result = generate_content(prompt).upper()
     return "MEDIA" in result
 
 
 # =========================
-# FILTER LINKS
+# 📝 SUMMARIZATION
 # =========================
-def filter_media_links(links):
-    valid_links = []
-
-    for link in links:
-        try:
-            print(f"🔍 Checking: {link}")
-            text = extract_transcript(link)
-
-            if is_media_content(text):
-                print("✅ Media content detected")
-                valid_links.append(link)
-            else:
-                print("❌ Not media content")
-
-        except Exception as e:
-            print(f"⚠ Skipped: {link}")
-
-    return valid_links
-
-
-# =========================
-# BASE SUMMARIZER
-# =========================
-def base_summarizer(link):
-    transcript = extract_transcript(link)
-
-    prompt = f"""
-Convert this YouTube transcript into a professional article.
-
-Rules:
-- Remove ads/promotions
-- Use headings, bullet points
-- Keep it clean and structured
-
-Transcript:
-{transcript}
-"""
-    return generate_content(prompt)
-
-
-# =========================
-# RECURSIVE SUMMARIZER
-# =========================
-def recursive_summarize(text):
+def summarize_text(text):
     chunks = get_chunks(text)
     summary = ""
 
     for chunk in chunks:
         prompt = f"""
-Current Summary:
+Convert into a professional article.
+
+Current:
 {summary}
 
-New Content:
+New:
 {chunk}
-
-Update article professionally.
 """
         summary = generate_content(prompt)
 
     return summary
 
 
-def long_summarizer(link):
-    text = extract_transcript(link)
-    return recursive_summarize(text)
-
-
 # =========================
-# LENGTH CHECK
-# =========================
-def is_long(link):
-    return len(extract_transcript(link)) > 1000
-
-
-# =========================
-# WEBPAGE GENERATOR
+# 🌐 WEBPAGE GENERATOR
 # =========================
 def generate_webpage(article):
     prompt = f"""
-You are a frontend developer.
-
-Generate output strictly in format:
+Generate HTML, CSS, JS.
 
 --html--
 <html>...</html>
@@ -164,26 +118,14 @@ Generate output strictly in format:
 ...
 --js--
 
-Create webpage for:
+Content:
 {article}
 """
     return generate_content(prompt)
 
 
 # =========================
-# SMART PIPELINE
-# =========================
-def smart_pipeline(link):
-    if is_long(link):
-        article = long_summarizer(link)
-    else:
-        article = base_summarizer(link)
-
-    return generate_webpage(article)
-
-
-# =========================
-# EXTRACT HTML/CSS/JS
+# 🔧 EXTRACT SECTIONS
 # =========================
 def extract_section(text, tag):
     try:
@@ -193,55 +135,82 @@ def extract_section(text, tag):
 
 
 # =========================
-# MAIN FUNCTION
+# 🎯 PROCESS
 # =========================
-def main():
-    links_input = input("Enter YouTube URLs (comma separated): ")
-    links = [l.strip() for l in links_input.split(",")]
+def process_link(link):
+    transcript = extract_transcript(link)
 
-    print("\n🔍 Filtering media content...\n")
+    if not is_media_content(transcript):
+        return None, "❌ Not media content"
 
-    media_links = filter_media_links(links)
+    article = summarize_text(transcript)
+    webpage = generate_webpage(article)
 
-    if not media_links:
-        print("❌ No media-related links found")
-        return
+    html = extract_section(webpage, "html")
+    css = extract_section(webpage, "css")
+    js = extract_section(webpage, "js")
 
-    selected_link = media_links[0]
-    print(f"\n🎯 Selected Link: {selected_link}")
+    # Save files
+    with open("index.html", "w") as f:
+        f.write(html)
 
-    try:
-        print("⏳ Processing...")
+    with open("style.css", "w") as f:
+        f.write(css)
 
-        result = smart_pipeline(selected_link)
+    with open("script.js", "w") as f:
+        f.write(js)
 
-        html = extract_section(result, "html")
-        css = extract_section(result, "css")
-        js = extract_section(result, "js")
+    # Zip
+    with zipfile.ZipFile("website.zip", "w") as zipf:
+        zipf.write("index.html")
+        zipf.write("style.css")
+        zipf.write("script.js")
 
-        with open("index.html", "w", encoding="utf-8") as f:
-            f.write(html)
-
-        with open("style.css", "w", encoding="utf-8") as f:
-            f.write(css)
-
-        with open("script.js", "w", encoding="utf-8") as f:
-            f.write(js)
-
-        with zipfile.ZipFile("website.zip", "w") as zipf:
-            zipf.write("index.html")
-            zipf.write("style.css")
-            zipf.write("script.js")
-
-        print("\n✅ Website generated successfully!")
-        print("📦 Output: website.zip")
-
-    except Exception as e:
-        print("❌ Error:", str(e))
+    return article, "✅ Success"
 
 
 # =========================
-# RUN
+# 🎨 UI
 # =========================
-if __name__ == "__main__":
-    main()
+st.set_page_config(page_title="AI Media Generator", layout="centered")
+
+st.title("🎥 AI Media Content Generator")
+st.write("Convert YouTube videos into articles + websites")
+
+links_input = st.text_area("Enter YouTube links (comma separated):")
+
+if st.button("🚀 Generate"):
+
+    if not links_input.strip():
+        st.warning("Enter at least one link")
+    else:
+        links = [l.strip() for l in links_input.split(",")]
+
+        with st.spinner("Processing..."):
+
+            for link in links:
+                try:
+                    st.write(f"🔍 Checking: {link}")
+
+                    article, status = process_link(link)
+                    st.write(status)
+
+                    if article:
+                        st.success("🎉 Article Generated")
+
+                        st.subheader("📄 Article")
+                        st.write(article)
+
+                        with open("website.zip", "rb") as f:
+                            st.download_button(
+                                "📥 Download Website",
+                                data=f,
+                                file_name="website.zip"
+                            )
+
+                        break
+
+                except Exception as e:
+                    st.error(f"Error: {str(e)}")
+
+        st.info("Done")
