@@ -21,7 +21,7 @@ def get_api_key():
 api_key = get_api_key()
 
 if not api_key:
-    st.error("❌ Gemini API key not found. Add it in Streamlit Secrets.")
+    st.error("❌ Gemini API key not found.")
     st.stop()
 
 genai.configure(api_key=api_key)
@@ -61,20 +61,21 @@ def get_chunks(text):
 
 
 # =========================
-# 🔍 CLASSIFIER
+# 🔍 IMPROVED CLASSIFIER (SAFE)
 # =========================
 def is_media_content(text):
     prompt = f"""
-Classify content.
+Check if this content is related to:
+AI, technology, education, news, business, or digital topics.
 
 Return ONLY:
-MEDIA or NON_MEDIA
+YES or NO
 
 Content:
 {text[:1000]}
 """
-    result = generate_content(prompt).upper()
-    return "MEDIA" in result
+    result = generate_content(prompt).strip().upper()
+    return "YES" in result
 
 
 # =========================
@@ -86,7 +87,7 @@ def summarize_text(text):
 
     for chunk in chunks:
         prompt = f"""
-Convert into a professional article.
+Convert into a professional article with headings and bullet points.
 
 Current:
 {summary}
@@ -104,7 +105,7 @@ New:
 # =========================
 def generate_webpage(article):
     prompt = f"""
-Generate HTML, CSS, JS.
+Generate a clean webpage.
 
 --html--
 <html>...</html>
@@ -140,8 +141,9 @@ def extract_section(text, tag):
 def process_link(link):
     transcript = extract_transcript(link)
 
+    # Soft check (IMPORTANT FIX)
     if not is_media_content(transcript):
-        return None, "❌ Not media content"
+        st.warning("⚠️ Content may not be media-related, processing anyway...")
 
     article = summarize_text(transcript)
     webpage = generate_webpage(article)
@@ -211,6 +213,6 @@ if st.button("🚀 Generate"):
                         break
 
                 except Exception as e:
-                    st.error(f"Error: {str(e)}")
+                    st.error(f"❌ Error: {str(e)}")
 
-        st.info("Done")
+        st.info("✅ Done")
